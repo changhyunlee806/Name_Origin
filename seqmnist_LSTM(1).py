@@ -1,0 +1,125 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Wed Nov 20 11:15:06 2019
+
+@author: eabernal
+"""
+
+import torch
+from torch import nn
+#from torch.autograd import Variable
+import torchvision.datasets as dsets
+import torchvision.transforms as transforms
+import matplotlib.pyplot as plt
+
+# %%
+#torch.manual_seed(1)    # reproducible
+# Hyper Parameters
+NEPOCHS = 100               
+BATCH_SIZE = 64
+TIME_STEP = 28          # rnn time step / image height
+INPUT_SIZE = 28         # rnn input size / image width
+LR = 0.01               # learning rate
+DOWNLOAD_MNIST = False   # set to True if haven't downloaded the data
+
+# %%
+# Mnist dataset
+train_data = dsets.MNIST(
+    root='./mnist/',
+    train=True,                         # this is training data
+    transform=transforms.ToTensor(),    # Converts a PIL.Image or numpy.ndarray to
+                                        # torch.FloatTensor of shape (C x H x W) and normalizes to range [0.0, 1.0]
+    download=DOWNLOAD_MNIST,            # download it if you don't have it
+)
+
+# %% 
+# display example
+print(train_data.train_data.size())     # (60000, 28, 28)
+print(train_data.train_labels.size())   # (60000)
+plt.imshow(train_data.train_data[0].numpy(), cmap='gray')
+plt.title('%i' % train_data.train_labels[0])
+plt.show()
+
+# Data Loader for easy mini-batch return in training
+train_loader = torch.utils.data.DataLoader(dataset=train_data,
+                                           batch_size=BATCH_SIZE, shuffle=True)
+
+# %%
+# convert test data into Variable
+test_data = dsets.MNIST(root='./mnist/', train=False, transform=transforms.ToTensor())
+test_x = test_data.test_data.float()/255.
+test_y = test_data.test_labels.numpy().squeeze()    # covert to numpy array
+
+# %%
+
+class RNN(nn.Module):
+    def __init__(self):
+        super(RNN, self).__init__()
+
+        self.rnn = nn.LSTM(         
+            input_size = INPUT_SIZE,
+            hidden_size = 64,         # number of hidden units
+            num_layers = 1,           # number of layers
+            batch_first = True,       # If your input data is of shape (seq_len, batch_size, features) then you don’t need batch_first=True and your LSTM will give output of shape (seq_len, batch.
+            #If your input data is of shape (batch_size, seq_len, features) then you need batch_first=True and your LSTM will give output of shape (batch_size, seq_len, hidden_size).
+        )
+        self.out = nn.Linear(64, 10)
+
+    def forward(self, x):
+        # x shape (batch, time_step, input_size)
+        # r_out shape (batch, time_step, output_size)
+        # h_n shape (n_layers, batch, hidden_size)
+        # h_c shape (n_layers, batch, hidden_size)
+        r_out, (h_n, h_c) = self.rnn(x, None)   # None represents zero initial hidden state
+
+        # choose last time step of r_out
+        out = self.out(r_out[:, -1, :])
+        return out
+#    
+#class RNN(nn.Module):
+#    def __init__(self):
+#        super(RNN, self).__init__()
+#
+#        self.rnn = nn.RNN(         
+#            input_size = INPUT_SIZE,
+#            hidden_size = 64,         # number of hidden units
+#            num_layers = 1,           # number of layers
+#            batch_first = True,       # If your input data is of shape (seq_len, batch_size, features) then you don’t need batch_first=True and your RNN will output a tensor with shape (seq_len, batch.
+#            #If your input data is of shape (batch_size, seq_len, features) then you need batch_first=True and your RNN will output a tensor with shape (batch_size, seq_len, hidden_size).
+#        )
+#        self.out = nn.Linear(64, 10)
+#
+#    def forward(self, x):
+#        # x shape (batch, time_step, input_size)
+#        # r_out shape (batch, time_step, output_size)
+#        # h_n shape (n_layers, batch, hidden_size)
+#        # h_c shape (n_layers, batch, hidden_size)
+#        # r_out, (h_n, h_c) = self.rnn(x, None)   # None represents zero initial hidden state
+#        r_out, h = self.rnn(x, None)   # None represents zero initial hidden state
+#
+#        # choose last time step of output
+#        out = self.out(r_out[:, -1, :])
+#        return out
+    
+rnn = RNN()
+optimizer = torch.optim.Adam(rnn.parameters(), lr=LR)   # optimize all enn parameters
+loss_func = nn.CrossEntropyLoss()                       # the target label is not one-hot
+
+# %% training and testing
+for epoch in range(NEPOCHS):
+    for step, (x, y) in enumerate(train_loader):        # gives batch data
+        b_x = x.view(-1, 28, 28)              # reshape x to (batch, time_step, input_size)
+        b_y = y                               # batch y
+
+        output = rnn(b_x)                               # rnn output
+        loss = loss_func(output, b_y)                   # cross entropy loss
+        optimizer.zero_grad()                           # clear gradients for this training step
+        loss.backward()                                 # backpropagation, compute gradients
+        optimizer.step()                                # apply gradients
+
+        if step % 50 == 0:
+            test_output = rnn(test_x)                   # (samples, time_step, input_size)
+            pred_y = torch.max(test_output, 1)[1].data.numpy().squeeze()
+            accuracy = sum(pred_y == test_y) / float(test_y.size)
+            print("Epoch: ", epoch, "| train loss: %.4f" % loss.item(), '| test accuracy: %.2f' % accuracy)
